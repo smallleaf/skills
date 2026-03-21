@@ -5,6 +5,9 @@
 
 ## 本技能功能
 来查询某个网址的新闻信息，然后输出新闻总结。这只是一个示例。
+<img width="1058" height="575" alt="image" src="https://github.com/user-attachments/assets/b6d051f8-6701-478e-be7f-0b6ac0783a30" />
+
+
 但是如果发挥你自己的聪明才智，你就能发现，可以用这种方式做非常多的事情。
 
 ## 我需不需要这个技能
