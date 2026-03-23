@@ -15,7 +15,7 @@ import json, time, re, os, sys, argparse, hashlib, base64, urllib.request, urlli
 from pathlib import Path
 
 sys.path.insert(0, os.path.expanduser("~/.openclaw/workspace/skills/shared"))
-from browser import new_browser_context
+from browser import new_cdp_context, new_browser_context, get_openclaw_cdp_ws
 
 OUTPUT_DIR = "/tmp/lanhu_view"
 PROFILE    = "lanhu_view"
@@ -225,9 +225,13 @@ def crawl(url: str, password: str, output_dir: str = OUTPUT_DIR) -> list:
     api_cfg = load_api_config()
     print(f"[INFO] Vision API: {api_cfg['base_url']} / {api_cfg['model']}", flush=True)
 
-    with new_browser_context(PROFILE) as (ctx, page):
-        # 宽 viewport 让 iframe 横向充分展开，避免右侧内容被截断
-        page.set_viewport_size({"width": 2560, "height": 900})
+    # 优先使用 OpenClaw 管理的 Browser（CDP 模式），否则回退到独立 profile
+    use_cdp = get_openclaw_cdp_ws() is not None
+    browser_ctx = new_cdp_context({"width": 2560, "height": 900}) if use_cdp \
+                  else new_browser_context(PROFILE, viewport={"width": 2560, "height": 900})
+    print(f"[INFO] 浏览器模式: {'OpenClaw CDP' if use_cdp else 'Persistent Profile'}", flush=True)
+
+    with browser_ctx as (_browser, page):
 
         # ── 打开 & 登录 ────────────────────────────────────────────────
         print(f"[INFO] 打开: {url}", flush=True)
