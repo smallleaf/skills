@@ -69,12 +69,21 @@ def screenshot_full_iframe(page, iframe_el, output_path: str) -> int:
         time.sleep(0.8)
 
     if not segments:
-        iframe_el.screenshot(path=output_path)
+        # 直接截图，转为真正的 JPEG
+        tmp_png = output_path + "_single.png"
+        iframe_el.screenshot(path=tmp_png)
+        import subprocess
+        subprocess.run(["sips", "-s", "format", "jpeg", "-s", "formatOptions", "80",
+                        tmp_png, "--out", output_path], capture_output=True)
+        os.remove(tmp_png)
         return 1
 
     if len(segments) == 1:
-        import shutil
-        shutil.move(segments[0], output_path)
+        # 单段也转为真正的 JPEG
+        import subprocess
+        subprocess.run(["sips", "-s", "format", "jpeg", "-s", "formatOptions", "80",
+                        segments[0], "--out", output_path], capture_output=True)
+        os.remove(segments[0])
         return 1
 
     # 垂直拼接多段截图
