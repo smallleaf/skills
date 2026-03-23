@@ -34,6 +34,96 @@ def load_api_config():
     }
 
 
+def screenshot_full_iframe(page, iframe_el, output_path: str) -> int:
+    """
+    点击 iframe 后用 PageDown 分段滚动截图并垂直拼接，返回截图段数。
+    蓝湖 Axure iframe 跨域，无法直接读取内部高度，用 MD5 检测内容变化来判断是否到底。
+    """
+    MAX_SEGS = 8  # 最多截 8 段，避免无限滚动
+
+    # 先点击 iframe，确保键盘事件作用于其内部
+    try:
+        iframe_el.click()
+        time.sleep(0.3)
+    except:
+        pass
+
+    segments = []
+    prev_hash = ""
+
+    for i in range(MAX_SEGS):
+        tmp = output_path + f"_seg{i}.png"
+        iframe_el.screenshot(path=tmp)
+        cur_hash = hashlib.md5(open(tmp, "rb").read()).hexdigest()
+
+        if cur_hash == prev_hash:
+            # 内容没变化，说明已到底
+            os.remove(tmp)
+            break
+
+        prev_hash = cur_hash
+        segments.append(tmp)
+
+        # PageDown 滚动到下一屏
+        page.keyboard.press("PageDown")
+        time.sleep(0.8)
+
+    if not segments:
+        iframe_el.screenshot(path=output_path)
+        return 1
+
+    if len(segments) == 1:
+        import shutil
+        shutil.move(segments[0], output_path)
+        return 1
+
+    # 垂直拼接多段截图
+    _png_vstack(segments, output_path)
+    for f in segments:
+        if os.path.exists(f):
+            os.remove(f)
+    return len(segments)
+
+
+def _png_vstack(png_files: list, output_path: str):
+    """用 subprocess 调用 swift 或系统工具拼接 PNG，不依赖 PIL"""
+    # 写一个临时 swift 脚本做图片拼接
+    swift_code = """
+import AppKit
+import Foundation
+let args = CommandLine.arguments
+let files = args[1..<(args.count-1)].map { URL(fileURLWithPath: $0) }
+let out   = args.last!
+var images: [NSImage] = []
+for url in files {
+    if let img = NSImage(contentsOf: url) { images.append(img) }
+}
+guard !images.isEmpty else { exit(1) }
+let totalH = images.reduce(0.0) { $0 + $1.size.height }
+let maxW   = images.map { $0.size.width }.max() ?? 0
+let canvas = NSImage(size: NSSize(width: maxW, height: totalH))
+canvas.lockFocus()
+var y = totalH
+for img in images {
+    y -= img.size.height
+    img.draw(in: NSRect(x: 0, y: y, width: img.size.width, height: img.size.height))
+}
+canvas.unlockFocus()
+if let tiff = canvas.tiffRepresentation,
+   let rep  = NSBitmapImageRep(data: tiff),
+   let jpeg = rep.representation(using: .jpeg, properties: [.compressionFactor: 0.75]) {
+    try! jpeg.write(to: URL(fileURLWithPath: out))
+}
+"""
+    swift_path = output_path + "_stack.swift"
+    with open(swift_path, "w") as f:
+        f.write(swift_code)
+    import subprocess
+    cmd = ["swift", swift_path] + png_files + [output_path]
+    subprocess.run(cmd, timeout=30)
+    os.remove(swift_path)
+
+
 def vision_analyze(image_path: str, page_name: str, api_cfg: dict) -> str:
     """用 Claude Vision 分析截图，返回页面需求描述"""
     with open(image_path, "rb") as f:
@@ -99,6 +189,7 @@ def crawl(url: str, password: str, output_dir: str = OUTPUT_DIR) -> list:
     print(f"[INFO] Vision API: {api_cfg['base_url']} / {api_cfg['model']}", flush=True)
 
     with new_browser_context(PROFILE) as (ctx, page):
+        page.set_viewport_size({"width": 1440, "height": 900})
 
         # ── 打开 & 登录 ────────────────────────────────────────────────
         print(f"[INFO] 打开: {url}", flush=True)
@@ -199,16 +290,17 @@ def crawl(url: str, password: str, output_dir: str = OUTPUT_DIR) -> list:
                     pass
             time.sleep(1.5)
 
-            # 截图
+            # 截图（分段滚动截图后垂直拼接，确保内容不被截断）
             safe  = re.sub(r'[^\w\u4e00-\u9fff]', '_', name)
-            p_out = os.path.join(shot_dir, f"{pg_num:02d}_{safe}.png")
+            p_out = os.path.join(shot_dir, f"{pg_num:02d}_{safe}.jpg")
             iframe_el = page.query_selector("#lan-mapping-iframe")
             try:
                 if iframe_el:
-                    iframe_el.screenshot(path=p_out)
+                    segments = screenshot_full_iframe(page, iframe_el, p_out)
+                    print(f"  截图: {os.path.basename(p_out)} ({segments} 段拼接)", flush=True)
                 else:
-                    page.screenshot(path=p_out, full_page=False)
-                print(f"  截图: {os.path.basename(p_out)}", flush=True)
+                    page.screenshot(path=p_out, full_page=True)
+                    print(f"  截图: {os.path.basename(p_out)}", flush=True)
             except Exception as e:
                 print(f"  [ERROR] 截图失败: {e}", flush=True)
                 continue
