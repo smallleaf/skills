@@ -88,30 +88,48 @@ def screenshot_full_iframe(page, iframe_el, output_path: str) -> int:
 def _png_vstack(png_files: list, output_path: str):
     """用 subprocess 调用 swift 或系统工具拼接 PNG，不依赖 PIL"""
     # 写一个临时 swift 脚本做图片拼接
+    # overlap: PageDown 在蓝湖 iframe(851px) 实际滚动约 651px，重叠约 200px
     swift_code = """
 import AppKit
 import Foundation
-let args = CommandLine.arguments
-let files = args[1..<(args.count-1)].map { URL(fileURLWithPath: $0) }
-let out   = args.last!
-var images: [NSImage] = []
-for url in files {
-    if let img = NSImage(contentsOf: url) { images.append(img) }
+let args   = CommandLine.arguments
+let files  = args[1..<(args.count-1)].map { $0 }
+let out    = args.last!
+let overlap = 200  // 相邻段顶部裁掉的重叠像素数
+
+var reps: [NSBitmapImageRep] = []
+var imgs: [NSImage] = []
+for path in files {
+    if let img = NSImage(contentsOfFile: path),
+       let rep = img.representations.first as? NSBitmapImageRep {
+        reps.append(rep)
+        imgs.append(img)
+    }
 }
-guard !images.isEmpty else { exit(1) }
-let totalH = images.reduce(0.0) { $0 + $1.size.height }
-let maxW   = images.map { $0.size.width }.max() ?? 0
-let canvas = NSImage(size: NSSize(width: maxW, height: totalH))
+guard !reps.isEmpty else { exit(1) }
+
+let w = reps.map { $0.pixelsWide }.max()!
+let totalH = reps.enumerated().reduce(0) { acc, pair in
+    let (i, rep) = pair
+    return acc + rep.pixelsHigh - (i == 0 ? 0 : overlap)
+}
+
+let canvas = NSImage(size: NSSize(width: w, height: totalH))
 canvas.lockFocus()
-var y = totalH
-for img in images {
-    y -= img.size.height
-    img.draw(in: NSRect(x: 0, y: y, width: img.size.width, height: img.size.height))
+var curY = 0
+for (i, rep) in reps.enumerated() {
+    let cropTop = i == 0 ? 0 : overlap
+    let drawH   = rep.pixelsHigh - cropTop
+    let dstY    = totalH - curY - drawH
+    imgs[i].draw(in: NSRect(x: 0, y: dstY, width: w, height: drawH),
+                 from: NSRect(x: 0, y: 0, width: rep.pixelsWide, height: drawH),
+                 operation: .copy, fraction: 1.0)
+    curY += drawH
 }
 canvas.unlockFocus()
 if let tiff = canvas.tiffRepresentation,
    let rep  = NSBitmapImageRep(data: tiff),
-   let jpeg = rep.representation(using: .jpeg, properties: [.compressionFactor: 0.75]) {
+   let jpeg = rep.representation(using: .jpeg, properties: [.compressionFactor: 0.80]) {
     try! jpeg.write(to: URL(fileURLWithPath: out))
 }
 """
