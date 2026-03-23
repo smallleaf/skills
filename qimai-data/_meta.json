@@ -1,0 +1,7 @@
+{
+  "name": "qimai-data",
+  "version": "1.0.0",
+  "description": "七麦数据抓取助手，读取 App Store 中国区新上架/下架应用数量及列表。",
+  "author": "OpenClaw User",
+  "created": "2026-03-20"
+}

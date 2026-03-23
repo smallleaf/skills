@@ -1,0 +1,7 @@
+{
+  "name": "baidu-data",
+  "version": "1.0.0",
+  "description": "百度指数查询助手，自动打开浏览器切换移动端，读取指定关键词的搜索指数数据。",
+  "author": "OpenClaw User",
+  "created": "2026-03-20"
+}

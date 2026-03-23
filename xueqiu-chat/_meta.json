@@ -1,0 +1,7 @@
+{
+  "name": "xueqiu-chat",
+  "version": "1.0.0",
+  "description": "雪球股票讨论抓取助手，自动打开浏览器抓取最新用户讨论并总结市场情绪。",
+  "author": "OpenClaw User",
+  "created": "2026-03-20"
+}
