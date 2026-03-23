@@ -382,15 +382,73 @@ def crawl(url: str, password: str, output_dir: str = OUTPUT_DIR) -> list:
 
 
 def format_requirements(pages: list) -> str:
-    """整合 Vision 分析结果，生成需求文档"""
+    """
+    整合 Vision 分析结果，生成需求文档。
+    规则：
+    - 按菜单顺序输出，depth 决定标题层级（depth=0 → ##，depth=1 → ###，depth=2 → ####）
+    - analysis 内容原文直接输出，不改写、不总结
+    - UI 交互内容（状态变化、按钮跳转、弹窗等）前加「【UI交互】」标签，与文字说明区分
+    """
+    # UI 交互相关关键词，用于识别 analysis 中的交互段落
+    UI_KEYWORDS = [
+        "状态", "点击", "跳转", "弹窗", "跳转至", "按钮", "触发",
+        "state", "click", "tap", "dialog", "modal", "navigate",
+        "关闭", "展示", "切换", "滑动", "选中", "佩戴", "卸下",
+    ]
+
+    # UI 交互段落的明确特征（精确匹配，避免误标业务文字）
+    UI_SECTION_PATTERNS = [
+        "状态1：", "状态2：", "状态3：", "状态4：",
+        "状态一：", "状态二：", "状态三：", "状态四：",
+        "### 状态", "## 状态",
+        "UI 状态变化", "UI状态变化",
+        "### 弹窗", "## 弹窗", "#### 弹窗",
+        "### 交互操作", "## 交互操作",
+        "### 分享操作", "## 分享操作",
+    ]
+
+    def mark_ui_sections(text: str) -> str:
+        """
+        仅对 Vision 明确输出的 UI 交互结构段落加【UI交互】标注：
+        - 状态X 标题/段落
+        - UI 状态变化、交互操作等节标题
+        - 弹窗节标题
+        其余文字（业务规则、字段说明等）原文不动。
+        """
+        if not text:
+            return text
+        result = []
+        for line in text.splitlines():
+            stripped = line.strip()
+            matched = any(pat in stripped for pat in UI_SECTION_PATTERNS)
+            if matched:
+                if stripped.startswith("#"):
+                    # 标题行：在标题文字前插入【UI交互】
+                    hashes = stripped[:len(stripped) - len(stripped.lstrip("#"))]
+                    title  = stripped.lstrip("#").strip()
+                    result.append(f"{hashes} 【UI交互】{title}")
+                else:
+                    # 普通行：整行加引用块标注
+                    result.append(f"> **【UI交互】** {stripped}")
+            else:
+                result.append(line)
+        return "\n".join(result)
+
     lines = ["# 用户荣誉成就 — 需求文档\n"]
 
     for pg in pages:
         depth   = pg.get("depth", 0)
         heading = "#" * (depth + 2)
         lines.append(f"\n{heading} {pg['name']}\n")
-        analysis = pg.get("analysis", "（暂无内容）")
-        lines.append(analysis)
+
+        analysis = pg.get("analysis") or "（暂无内容）"
+
+        # 失败的页直接原文输出，加提示
+        if analysis.startswith("[Vision 分析失败]"):
+            lines.append(f"> ⚠️ {analysis}")
+        else:
+            lines.append(mark_ui_sections(analysis))
+
         lines.append("")
 
     return "\n".join(lines)
