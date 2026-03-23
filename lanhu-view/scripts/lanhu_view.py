@@ -144,10 +144,29 @@ if let tiff = canvas.tiffRepresentation,
 
 def vision_analyze(image_path: str, page_name: str, api_cfg: dict) -> str:
     """用 Claude Vision 分析截图，返回页面需求描述"""
-    with open(image_path, "rb") as f:
+    # 发送前检查文件大小，超过 3MB 则用 sips 缩小后再发
+    MAX_BYTES = 3 * 1024 * 1024
+    send_path = image_path
+    tmp_resized = None
+    if os.path.getsize(image_path) > MAX_BYTES:
+        tmp_resized = image_path + "_resized.jpg"
+        import subprocess
+        subprocess.run([
+            "sips", "--resampleWidth", "1600",
+            "-s", "format", "jpeg",
+            "-s", "formatOptions", "75",
+            image_path, "--out", tmp_resized
+        ], capture_output=True)
+        if os.path.exists(tmp_resized):
+            send_path = tmp_resized
+
+    with open(send_path, "rb") as f:
         img_b64 = base64.standard_b64encode(f.read()).decode()
 
-    ext = os.path.splitext(image_path)[-1].lower()
+    if tmp_resized and os.path.exists(tmp_resized):
+        os.remove(tmp_resized)
+
+    ext = os.path.splitext(send_path)[-1].lower()
     media_type = "image/png" if ext == ".png" else "image/jpeg"
 
     prompt = f"""这是蓝湖原型截图，页面名称「{page_name}」，属于「用户荣誉成就/勋章系统」需求。
@@ -207,7 +226,8 @@ def crawl(url: str, password: str, output_dir: str = OUTPUT_DIR) -> list:
     print(f"[INFO] Vision API: {api_cfg['base_url']} / {api_cfg['model']}", flush=True)
 
     with new_browser_context(PROFILE) as (ctx, page):
-        page.set_viewport_size({"width": 1440, "height": 900})
+        # 宽 viewport 让 iframe 横向充分展开，避免右侧内容被截断
+        page.set_viewport_size({"width": 2560, "height": 900})
 
         # ── 打开 & 登录 ────────────────────────────────────────────────
         print(f"[INFO] 打开: {url}", flush=True)
