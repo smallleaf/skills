@@ -1,45 +1,38 @@
-# lanhu-view — 蓝湖原型需求提取助手
+# lanhu-view — 蓝湖原型需求提取
 
 ## 功能
 
-输入蓝湖分享链接，自动打开浏览器遍历所有原型页面截图，使用 Claude Vision 图像识别提取需求内容，输出结构化需求文档。
+提供蓝湖分享链接，自动完成截图 + Claude Vision 图像识别，提取页面内容、UI 状态变化、字段说明、交互流程，输出结构化需求文档。
 
 ## 触发场景
 
-- "用 lanhu-view 抓取这个蓝湖需求：https://lanhuapp.com/link/#/invite?sid=xxx"
-- "读取蓝湖原型内容"
+- "用 lanhu-view 抓取下这个需求 https://lanhuapp.com/link/..."
+- "提取蓝湖原型的需求内容"
+- "分析这个蓝湖分享链接"
 
-## 功能说明
+## 输出内容
 
-- 自动输入分享密码，登录蓝湖
-- 读取侧边栏页面列表，自动跳过含「弃用/废弃/deprecated/旧版」的页面
-- 逐页点击截图，等待 iframe 渲染完成
-- 调用 Claude Vision API 分析每张截图：
-  - 只提取与当前需求相关的内容
-  - 忽略无关通用 UI（状态栏、底部导航等）
-  - 原文罗列标注文字，描述 UI 状态变化和交互流程
-- 输出 `requirements.md` 需求文档
+- 各页面 UI 状态变化（不同条件下的展示内容）
+- 表单/列表字段及示例值
+- 交互操作（触发条件 → 跳转目标）
+- 文字标注原文（不改写）
+- 完整需求文档（`/tmp/lanhu_view/requirements.md`）
 
-## 输出文件
+## 使用方式
 
-| 文件 | 说明 |
-|------|------|
-| `screenshots/*.png` | 各页面截图 |
-| `pages.json` | 页面数据（含 Vision 分析结果） |
-| `requirements.md` | 结构化需求文档 |
+```
+用 lanhu-view 抓取：https://lanhuapp.com/link/#/invite?sid=xxx
+密码：xxxx
+```
 
-默认输出目录：`/tmp/lanhu_view/`
+## 技术实现
+
+- `playwright` 持久化 profile（`lanhu_view`）打开蓝湖并截图
+- Claude Vision API（`anthropic/claude-sonnet-4.6`）图像识别
+- 自动跳过含「弃用/废弃/deprecated/旧版」的页面
+- 截图等待 iframe MD5 变化，确保内容渲染完成
 
 ## 依赖
 
 - `playwright`：`pip install playwright && playwright install chromium`
-- `openclaw browser` CLI（持久化 profile `lanhu_view`）
-- Claude Vision API（通过 `~/.openclaw/openclaw.json` 配置读取）
-
-## 使用示例
-
-```
-用 lanhu-view 抓取下这个需求：
-https://lanhuapp.com/link/#/invite?sid=qxzLkrM7
-密码：AOLp
-```
+- Claude Vision API（通过 `~/.openclaw/openclaw.json` 配置）

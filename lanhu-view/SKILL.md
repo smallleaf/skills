@@ -1,114 +1,96 @@
 ---
 name: lanhu-view
-description: 蓝湖原型需求分析与测试用例生成。当用户提供蓝湖分享链接（lanhuapp.com/link）并要求提取需求、分析原型、生成测试用例、进行质量闭环时触发。整合了蓝湖截图抓取、需求识别、测试用例设计全链路。
+description: 蓝湖原型需求提取。当用户提供蓝湖分享链接（lanhuapp.com/link）并要求提取需求、分析原型内容时触发。自动截图并使用 Claude Vision 图像识别，提取页面内容、UI 状态变化、交互流程，输出结构化需求文档。
 ---
 
-# lanhu-view — 蓝湖需求提取 & 测试用例生成
+# lanhu-view — 蓝湖原型需求提取
 
 ## 执行流程
 
-### Step 0：环境检查
-
-```bash
-python3 -c "from playwright.sync_api import sync_playwright; print('OK')" 2>/dev/null || echo "MISSING"
-```
-
-- ✅ OK：直接进入 Step 1
-- ❌ MISSING：执行 `pip install playwright && playwright install chromium`
-
-### Step 1：抓取蓝湖截图
+### Step 1：运行抓取脚本
 
 ```bash
 python3 ~/.openclaw/workspace/skills/lanhu-view/scripts/lanhu_view.py \
   --url "<蓝湖分享链接>" \
-  --password "<访问密码>" \
+  --password "<访问密码（无密码可省略）>" \
   --output /tmp/lanhu_view
 ```
 
-完成后输出：
+脚本自动完成：
+1. 用持久化 browser profile（`lanhu_view`）打开蓝湖链接并输入密码
+2. 读取侧边栏所有页面，自动跳过含「弃用/废弃/deprecated/旧版」的页面
+3. 逐页点击 → 等待 iframe 渲染稳定 → 截图保存为 PNG
+4. 对每张截图调用 Claude Vision API 进行图像识别
+5. 输出 `pages.json`（含识别结果）和 `requirements.md`（结构化需求文档）
+
+**输出目录：**
 - `/tmp/lanhu_view/screenshots/` — 各页截图（PNG，按侧边栏顺序编号）
-- `/tmp/lanhu_view/index.json` — 页面列表（name / depth / screenshot）
+- `/tmp/lanhu_view/pages.json` — 页面列表（name / depth / screenshot / analysis）
+- `/tmp/lanhu_view/requirements.md` — 结构化需求文档
 
-**注意**：
-- 自动跳过含「弃用/废弃/deprecated/旧版」的页面
-- 使用持久化 profile `lanhu_view`（non-headless，避免卡死）
-- profile 路径：`~/.openclaw/workspace/.browser_profiles/lanhu_view`
+### Step 2：输出需求文档
 
-### Step 2：图像识别提取需求
+直接读取并输出 `/tmp/lanhu_view/requirements.md` 内容。
 
-读取 `index.json`，按顺序用 `read` 工具读每张截图，识别：
+如有个别页面 Vision 分析失败（网络超时），单独对该页重试：
 
-1. **页面拆分**：以截图实际内容为准，有几个页面识别几个，不臆想
-2. **每页提取**：
-   - UI 元素（按钮、输入框、列表、标签）
-   - 业务规则、交互逻辑、标注文字
-   - 字段定义、限制条件、跳转关系
-   - 边界值、异常情况
+```python
+import json, base64, urllib.request
 
-输出结构化 PRD：
-```json
-{
-  "project": "项目名称",
-  "pages": [
-    {
-      "name": "页面路径（与侧边栏一致）",
-      "ui_components": ["UI元素"],
-      "business_rules": ["业务规则"],
-      "interactions": ["交互逻辑"],
-      "edge_cases": ["边界/异常"]
-    }
-  ]
+API_KEY  = "<从 openclaw.json 读取>"
+BASE_URL = "https://aigw.gzmiyuan.com/aicoding/v1"
+MODEL    = "anthropic/claude-sonnet-4.6"
+
+with open("<screenshot_path>", "rb") as f:
+    img_b64 = base64.standard_b64encode(f.read()).decode()
+
+payload = {
+    "model": MODEL, "max_tokens": 2048,
+    "messages": [{"role": "user", "content": [
+        {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{img_b64}"}},
+        {"type": "text", "text": "<prompt>"}
+    ]}]
 }
+req = urllib.request.Request(
+    f"{BASE_URL}/chat/completions",
+    data=json.dumps(payload).encode(),
+    headers={"Authorization": f"Bearer {API_KEY}", "Content-Type": "application/json"}
+)
+with urllib.request.urlopen(req, timeout=60) as r:
+    print(json.loads(r.read())["choices"][0]["message"]["content"])
 ```
 
-### Step 3：生成测试用例
+## Vision 识别规则
 
-基于 Step 2 的真实 PRD 内容，按以下五维度设计用例：
+每张截图的识别 prompt 遵循以下规则：
 
-| 维度 | 说明 | 优先级 |
-|------|------|--------|
-| 正向流程 | 正常路径操作，功能符合预期 | P0 |
-| 业务规则 | 核心逻辑、条件判断、资格校验 | P0 |
-| 边界情况 | 边界值、临界条件、并发点击 | P1 |
-| 异常逻辑 | 无网络、弱网、非法输入、权限拒绝 | P1 |
-| UI 展现 | 布局、文案、样式符合设计稿 | P2 |
+1. **只提取与本次需求相关的内容**，忽略：顶部状态栏（时间/信号/电量）、底部通用导航 Tab、与需求无关的其他业务模块
+2. **有文字说明/标注** → 原文罗列，不改写
+3. **有 UI 状态变化** → 描述每个状态的展示内容和跳转，格式：「如果用户xxx，显示xxx，点击跳转至【xxx】」
+4. **有表单/列表字段** → 逐字段列出名称和示例值
+5. **有交互操作** → 写明触发条件和跳转目标
+6. 不总结、不归纳、不润色，不添加截图中没有的内容
 
-输出格式（XMind 脑图结构）：
-```
-[页面完整路径]
-├── UI (P2)
-│   └── [样式/布局/文案测试点]
-├── 交互 (P1)
-│   └── [点击/跳转/滑动测试点]
-├── 功能点 (P0)
-│   └── [业务规则/校验测试点]
-└── 异常 (P1)
-    └── [边界值/错误状态测试点]
-```
+## API 配置
 
-### Step 4：交付
+Vision API 配置从 `~/.openclaw/openclaw.json` 自动读取：
+- provider：`claude-sonnet`
+- baseUrl：`https://aigw.gzmiyuan.com/aicoding/v1`
+- model：`anthropic/claude-sonnet-4.6`
 
-输出完整需求文档 + 测试用例，格式：
+## 环境依赖
 
-```markdown
-# [项目名] 需求文档 & 测试用例
+```bash
+# 检查 playwright
+python3 -c "from playwright.sync_api import sync_playwright; print('OK')"
 
-## 一、[页面名]（depth=0）
-### 1.1 [子页面]（depth=1）
-
-**需求内容：**
-...
-
-**测试用例：**
-| 用例ID | 测试点 | 操作步骤 | 预期结果 | 优先级 |
-|--------|--------|----------|----------|--------|
-| TC-001 | ... | ... | ... | P0 |
+# 安装（如未安装）
+pip install playwright && playwright install chromium
 ```
 
-## 核心约束
+## 注意事项
 
-- **严禁盲猜**：所有内容必须来自截图真实内容
-- **完整覆盖**：每条业务规则至少对应一条测试用例
-- **边界必测**：出现金额/数量/时间限制，必须补充边界值测试
-- **同名页面只处理一次**
-- **截图用 `read` 工具读取绝对路径**
+- 使用独立 browser profile `lanhu_view`，不影响其他 openclaw browser 会话
+- 截图等待逻辑：点击侧边栏后检测 iframe 内容 MD5 变化，确认渲染完成再截图
+- 同名页面只处理一次（跳过重复）
+- Vision API 网络超时时，对失败页面单独重试即可，无需重新截图
